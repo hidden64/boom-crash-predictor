@@ -92,8 +92,8 @@ export default function Dashboard() {
           setProbability(data.spike_probability);
           setBackendConnected(true);
           
-          // Audio Alert System for 60%
-          if (data.spike_probability >= 60) {
+          // Audio Alert System for 80%
+          if (data.spike_probability >= 80) {
             triggerAlert60(data.spike_probability, ticks[ticks.length - 1].price);
             if (!playedSoundRef.current) {
               playedSoundRef.current = true;
