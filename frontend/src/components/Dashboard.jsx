@@ -32,58 +32,37 @@ export default function Dashboard() {
   const wsRef = useRef(null);
   const playedSoundRef = useRef(false);
 
-  // Connection to Deriv WebSocket
+  // Connection to Deriv via Web Worker (Anti-Sleep)
+  const workerRef = useRef(null);
+
   useEffect(() => {
-    const APP_ID = 1089; // Public app_id
-    const wsUrl = `wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`;
+    // Instanciation du Worker qui tournera sur un thread séparé
+    workerRef.current = new Worker("/derivWorker.js");
     
-    const connectToDeriv = () => {
-      wsRef.current = new WebSocket(wsUrl);
-
-      wsRef.current.onopen = () => {
-        console.log("Connected to Deriv WebSocket");
+    workerRef.current.onmessage = (e) => {
+      const { type, payload } = e.data;
+      if (type === "STATUS") {
+        setDerivConnected(payload === "CONNECTED");
+      } else if (type === "TICK") {
         setDerivConnected(true);
-        // Subscribe to stream
-        wsRef.current.send(JSON.stringify({
-          ticks: "BOOM1000",
-          subscribe: 1
-        }));
-      };
-
-      wsRef.current.onmessage = (msg) => {
-        const data = JSON.parse(msg.data);
-        if (data.msg_type === "tick" && data.tick) {
-          const newTick = {
-            timestamp: data.tick.epoch,
-            price: data.tick.quote,
-            time: new Date(data.tick.epoch * 1000).toLocaleTimeString(),
-          };
-          
-          setTicks(prev => {
-            const updated = [...prev, newTick];
-            // Keep the sliding window of ~50-60 items max to avoid memory leak and fit the prediction model
-            return updated.length > 60 ? updated.slice(updated.length - 60) : updated;
-          });
-        }
-      };
-
-      wsRef.current.onclose = () => {
-        console.log("Disconnected from Deriv WebSocket");
-        setDerivConnected(false);
-        // Reconnect after 5 seconds
-        setTimeout(connectToDeriv, 5000);
-      };
-      
-      wsRef.current.onerror = (err) => {
-        console.error("Deriv WebSocket Error:", err);
-        wsRef.current.close();
-      };
+        const newTick = {
+           ...payload,
+           time: new Date(payload.timestamp * 1000).toLocaleTimeString()
+        };
+        setTicks(prev => {
+          const updated = [...prev, newTick];
+          // Keep the sliding window of ~50-60 items max
+          return updated.length > 60 ? updated.slice(updated.length - 60) : updated;
+        });
+      }
     };
-
-    connectToDeriv();
-
+    
+    // Démarre la collecte
+    workerRef.current.postMessage({ type: "START" });
+    
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      workerRef.current.postMessage({ type: "STOP" });
+      workerRef.current.terminate();
     };
   }, []);
 
@@ -119,7 +98,10 @@ export default function Dashboard() {
             if (!playedSoundRef.current) {
               playedSoundRef.current = true;
               const audio = new Audio('/son.wav');
-              audio.play().catch(e => console.error("Audio block par le navigateur:", e));
+              audio.play().catch(e => {
+                // Warning muet au lieu d'une erreur pour éviter que Next.js affiche l'écran rouge
+                console.warn("Son bloqué car pas de clic initial de l'utilisateur", e.message);
+              });
             }
           } else {
             // Reset the lock when probability drops below 60%

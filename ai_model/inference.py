@@ -15,14 +15,21 @@ SCALER_PATH = os.path.join(SAVE_DIR, "scaler.pkl")
 class SpikePredictorLSTM(nn.Module):
     def __init__(self, input_size, hidden_size=64, num_layers=2):
         super(SpikePredictorLSTM, self).__init__()
-        # Le dropout est automatiquement désactivé en mode model.eval()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
-        self.fc = nn.Linear(hidden_size, 1)
+        self.flatten = nn.Flatten()
+        self.fc1 = nn.Linear(input_size * 50, hidden_size * 2) # 50 = WINDOW_SIZE
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(hidden_size * 2, hidden_size)
+        self.fc3 = nn.Linear(hidden_size, 1)
         
     def forward(self, x):
-        out, _ = self.lstm(x)
-        out = out[:, -1, :] 
-        out = self.fc(out)
+        out = self.flatten(x)
+        out = self.fc1(out)
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.fc2(out)
+        out = self.relu(out)
+        out = self.fc3(out)
         return out
 
 class BoomPredictor:
@@ -38,7 +45,8 @@ class BoomPredictor:
             self.scaler = None
             
         # 2. Chargement du Cerveau PyTorch
-        self.model = SpikePredictorLSTM(input_size=3).to(self.device)
+        # L'entrée est désormais de 6 colonnes (Prix, Delta, Velocité, RSI, EMA9, EMA21)
+        self.model = SpikePredictorLSTM(input_size=6).to(self.device)
         try:
             # Map location permet de forcer en CPU si la personne qui run le bot n'a pas de GPU
             self.model.load_state_dict(torch.load(MODEL_PATH, map_location=self.device, weights_only=True))
@@ -56,13 +64,28 @@ class BoomPredictor:
             
         df = pd.DataFrame(recent_ticks)
         
-        # Feature Engineering à la volée (le même que data_pipeline)
+        # Feature Engineering à la volée (le même que data_pipeline/train.py)
         df['price_change'] = df['price'].diff()
         df['time_delta'] = df['timestamp'].diff()
         df['velocity'] = df['price_change'] / df['time_delta']
+        
+        # --- NOUVEAUX INDICATEURS (RSI, EMA) ---
+        delta = df['price'].diff()
+        up = delta.clip(lower=0)
+        down = -1 * delta.clip(upper=0)
+        # On utilise une approximation exponentielle pour s'aligner sur pyTorch
+        ema_up = up.ewm(com=13, adjust=False).mean()
+        ema_down = down.ewm(com=13, adjust=False).mean()
+        rs = ema_up / ema_down
+        df['rsi'] = 100 - (100 / (1 + rs))
+        
+        df['ema_9'] = df['price'].ewm(span=9, adjust=False).mean()
+        df['ema_21'] = df['price'].ewm(span=21, adjust=False).mean()
+        
         df.fillna(0, inplace=True)
         
-        data_values = df[['price_change', 'time_delta', 'velocity']].values
+        features_list = ['price_change', 'time_delta', 'velocity', 'rsi', 'ema_9', 'ema_21']
+        data_values = df[features_list].values
         
         # Le réseau s'attend IMPÉRATIVEMENT à une fenêtre de taille 50.
         if len(data_values) > 50:
@@ -70,7 +93,7 @@ class BoomPredictor:
         elif len(data_values) < 50:
             # Padding de zéros pour compléter
             pad_size = 50 - len(data_values)
-            padding = np.zeros((pad_size, 3))
+            padding = np.zeros((pad_size, 6))
             data_values = np.vstack((padding, data_values))
             
         # Standardisation avec les paramètres d'entrainement
@@ -79,13 +102,13 @@ class BoomPredictor:
         else:
             data_scaled = data_values
             
-        # Formattage Tenseur : (Batch=1, Séquence=50, Features=3)
+        # Formattage Tenseur : (Batch=1, Séquence=50, Features=6)
         x_tensor = torch.FloatTensor(data_scaled).unsqueeze(0).to(self.device)
         
         # Vitesse maximale (pas de calcul de backpropagation gradients)
         with torch.no_grad():
             logits = self.model(x_tensor)
-            # Conversion Logits -> Probabilité % par fonction Sigmoïde (S)
+            # Conversion Logits -> Probabilité % par fonction Sigmoïde (S) native
             probability = torch.sigmoid(logits).item()
             
         return probability

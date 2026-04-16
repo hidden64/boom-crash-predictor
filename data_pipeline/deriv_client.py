@@ -135,7 +135,7 @@ if __name__ == "__main__":
     # Si cela échoue, tu pourras tester avec "BOOM1000" ou chercher le bon code dans l'API.
     
     try:
-        # Exécute la boucle asynchrone principal
-        asyncio.run(fetch_historical_ticks(symbol="BOOM1000", total_ticks=100000))
+        # Exécute la boucle asynchrone principal (Passage à 1 000 000 Ticks)
+        asyncio.run(fetch_historical_ticks(symbol="BOOM1000", total_ticks=1000000))
     except KeyboardInterrupt:
         logger.warning("Interrompu par l'utilisateur.")
