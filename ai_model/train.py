@@ -1,6 +1,13 @@
 import os
 import glob
+
+# Correctif de Segmentation Fault PyTorch sous Windows (OpenMP conflict)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 import torch
+torch.set_num_threads(1)
+
 import torch.nn as nn
 import pandas as pd
 import numpy as np
@@ -117,26 +124,56 @@ def train_model():
     model = SpikePredictorLSTM(input_size=X_train.shape[2]).to(device)
     
     # BCEWithLogitsLoss avec pos_weight est la méthode la plus performante pour déséquilibre extrême
-    weight_tensor = torch.tensor([pos_weight]).to(device)
+    # FIX MAJOR: Forcer le type Float32. En float64 (par défaut en python), la rétropropagation PyTorch sous Windows crashe.
+    weight_tensor = torch.tensor([pos_weight], dtype=torch.float32).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=weight_tensor)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     
     print("\n==== DÉMARRAGE DE L'ENTRAÎNEMENT ====")
     for epoch in range(EPOCHS):
+        print(f"-> Début de l'Epoch {epoch+1}")
         model.train()
         epoch_loss = 0
-        for batch_x, batch_y in train_loader:
-            batch_x, batch_y = batch_x.to(device), batch_y.to(device).unsqueeze(1)
+        batch_idx = 0
+        
+        print("-> Chargement du premier batch via DataLoader...")
+        try:
+            for batch_x, batch_y in train_loader:
+                batch_idx += 1
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Données chargées avec succès.")
+                
+                batch_x, batch_y = batch_x.to(device), batch_y.to(device).unsqueeze(1)
+                
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Envoi au FloatTensor device.")
+                
+                optimizer.zero_grad()
+                
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Passage forward (LSTM)...")
+                outputs = model(batch_x)
+                
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Calcul de la perte...")
+                loss = criterion(outputs, batch_y)
+                
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Rétropropagation (Backward)...")
+                loss.backward()
+                
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Optimisation (Step)...")
+                optimizer.step()
+                
+                epoch_loss += loss.item()
+                if batch_idx == 1:
+                    print(f"   [Batch {batch_idx}] Terminé sans erreur.")
+                
+        except Exception as e:
+            print(f"Exception capturée : {e}")
             
-            optimizer.zero_grad()
-            outputs = model(batch_x)
-            loss = criterion(outputs, batch_y)
-            loss.backward()
-            optimizer.step()
-            
-            epoch_loss += loss.item()
-            
-        print(f"Epoch {epoch+1:02d}/{EPOCHS} -> Loss : {epoch_loss/len(train_loader):.4f}")
+        print(f"Epoch {epoch+1:02d}/{EPOCHS} -> Loss : {epoch_loss/max(1, len(train_loader)):.4f}")
         
     print("\n==== ENTRAÎNEMENT TERMINÉ ====")
     
@@ -146,7 +183,7 @@ def train_model():
     scaler_path = os.path.join(SAVE_DIR, "scaler.pkl")
     
     torch.save(model.state_dict(), model_path)
-    joblib.save(scaler, scaler_path)
+    joblib.dump(scaler, scaler_path)
     
     print(f"[SUCCESS] Le cerveau IA a été exporté vers {model_path}.")
     print(f"[SUCCESS] Le normalisateur a été exporté vers {scaler_path}.")

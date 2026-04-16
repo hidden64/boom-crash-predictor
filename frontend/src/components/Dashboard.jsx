@@ -24,11 +24,13 @@ export default function Dashboard() {
   const [ticks, setTicks] = useState([]);
   const [probability, setProbability] = useState(0);
   const [alerts, setAlerts] = useState([]);
+  const [alerts60, setAlerts60] = useState([]);
   
   const [derivConnected, setDerivConnected] = useState(false);
   const [backendConnected, setBackendConnected] = useState(true);
   
   const wsRef = useRef(null);
+  const playedSoundRef = useRef(false);
 
   // Connection to Deriv WebSocket
   useEffect(() => {
@@ -41,9 +43,9 @@ export default function Dashboard() {
       wsRef.current.onopen = () => {
         console.log("Connected to Deriv WebSocket");
         setDerivConnected(true);
-        // Suscribe to BOOM1000EZ stream
+        // Subscribe to stream
         wsRef.current.send(JSON.stringify({
-          ticks: "BOOM1000EZ",
+          ticks: "BOOM1000",
           subscribe: 1
         }));
       };
@@ -92,14 +94,14 @@ export default function Dashboard() {
       const sendPrediction = async () => {
         try {
           const payload = {
-            symbol: "BOOM1000EZ",
+            symbol: "BOOM1000",
             ticks: ticks.map(t => ({
               timestamp: t.timestamp,
               price: t.price
             }))
           };
           
-          const res = await fetch("http://localhost:8000/predict", {
+          const res = await fetch("http://127.0.0.1:8000/predict", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -110,6 +112,19 @@ export default function Dashboard() {
           
           setProbability(data.spike_probability);
           setBackendConnected(true);
+          
+          // Audio Alert System for 60%
+          if (data.spike_probability >= 60) {
+            triggerAlert60(data.spike_probability, ticks[ticks.length - 1].price);
+            if (!playedSoundRef.current) {
+              playedSoundRef.current = true;
+              const audio = new Audio('/son.wav');
+              audio.play().catch(e => console.error("Audio block par le navigateur:", e));
+            }
+          } else {
+            // Reset the lock when probability drops below 60%
+            playedSoundRef.current = false;
+          }
           
           if (data.alert) {
             triggerAlert(data.spike_probability, ticks[ticks.length - 1].price);
@@ -143,6 +158,23 @@ export default function Dashboard() {
     });
   };
 
+  const triggerAlert60 = (prob, price) => {
+    const newAlert = {
+      id: Date.now(),
+      time: new Date().toLocaleTimeString(),
+      probability: prob,
+      price: price
+    };
+    
+    setAlerts60(prev => {
+      if (prev.length > 0 && (newAlert.id - prev[0].id) < 5000) {
+        return prev;
+      }
+      const updated = [newAlert, ...prev];
+      return updated.slice(0, 10);
+    });
+  };
+
   const isHighRisk = probability >= 80;
   const isMediumRisk = probability >= 50 && probability < 80;
   
@@ -160,7 +192,7 @@ export default function Dashboard() {
             <h1 className="text-3xl font-bold bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent">
               La Tour de Contrôle
             </h1>
-            <p className="text-zinc-500 text-sm font-medium">Flux IA en temps réel - BOOM1000EZ</p>
+            <p className="text-zinc-500 text-sm font-medium">Flux IA en temps réel - BOOM1000</p>
           </div>
         </div>
 
@@ -248,7 +280,7 @@ export default function Dashboard() {
           <div className="h-96 p-6 rounded-3xl bg-zinc-900/50 border border-zinc-800 shadow-xl backdrop-blur-xl">
             <h2 className="text-lg font-medium text-zinc-400 mb-4 flex items-center justify-between">
               <span>Flux Tik par Tik</span>
-              <span className="text-xs px-2 py-1 bg-zinc-800 rounded text-zinc-300">BOOM1000EZ</span>
+              <span className="text-xs px-2 py-1 bg-zinc-800 rounded text-zinc-300">BOOM1000</span>
             </h2>
             <div className="h-[280px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -321,6 +353,31 @@ export default function Dashboard() {
             )}
           </div>
 
+        </div>
+
+        {/* Historique 60% (Full Width Bottom) */}
+        <div className="lg:col-span-3 p-6 rounded-3xl bg-zinc-900/50 border border-zinc-800 shadow-xl backdrop-blur-xl mt-2">
+          <h2 className="text-lg font-medium text-zinc-400 mb-4">Historique des Prémices (&gt;60%)</h2>
+          {alerts60.length === 0 ? (
+            <div className="h-20 flex items-center justify-center text-zinc-600 italic">
+              Aucun prémice détecté pour le moment.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {alerts60.map(alert => (
+                <div key={alert.id} className="flex flex-col p-4 bg-yellow-500/5 rounded-xl border border-yellow-500/20 hover:bg-yellow-500/10 transition-colors">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Activity className="w-4 h-4 text-yellow-400" />
+                    <span className="font-semibold text-zinc-200">{alert.time}</span>
+                  </div>
+                  <div className="flex justify-between items-end">
+                    <span className="text-sm text-zinc-500 font-mono">{alert.price.toFixed(3)}</span>
+                    <span className="text-lg font-bold text-yellow-400">{alert.probability.toFixed(1)}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 

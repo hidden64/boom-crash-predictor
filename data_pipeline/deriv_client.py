@@ -35,8 +35,8 @@ async def fetch_historical_ticks(symbol: str = "BOOM1000EZ", total_ticks: int = 
     all_prices = []
     all_times = []
     
-    # Limite max de l'API Deriv par requête est 5000 ticks.
-    chunk_size = 5000 
+    # Limite max diminuée pour éviter l'erreur côté serveur Deriv
+    chunk_size = 1000 
     end_time = "latest"
     
     logger.info(f"Connexion à Deriv (URL: wss://ws.derivws.com) pour le symbole {symbol}...")
