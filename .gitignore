@@ -1,0 +1,7 @@
+node_modules/
+__pycache__/
+.env
+ai_model/dataset/
+ai_model/models_saved/
+.venv/
+
