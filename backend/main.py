@@ -15,8 +15,14 @@ except Exception as e:
     print(f"Erreur d'import critique du modèle : {e}")
     predictor_service = None
 
+# Import du module de base de données
+from database import init_db, save_prediction
+
 # Création du chef d'orchestre via FastAPI
 app = FastAPI(title="Boom/Crash IA Predictor & Trading Engine", version="1.0")
+
+# Initialisation de la base de données
+init_db()
 
 # Middleware vital pour autoriser notre futur Front-End (Next.js) à faire des appels AJAX
 app.add_middleware(
@@ -67,6 +73,16 @@ def predict_spike(request: PredictRequest):
         # Logic Métier : Alerte
         # Si la proba franchit la barre fatidique des 80%, c'est un signal "BUY" potentiel (Boom)
         trigger_alert = bool(prob_raw >= 0.80)
+        
+        # Sauvegarde en base de données si l'alerte est déclenchée
+        if trigger_alert and request.ticks:
+            latest_tick = request.ticks[-1]
+            save_prediction(
+                symbol=request.symbol,
+                probability=round(prob_raw * 100, 2),
+                price=latest_tick.price,
+                tick_timestamp=latest_tick.timestamp
+            )
         
         process_time_ms = round((time.time() - start_time) * 1000, 2)
         

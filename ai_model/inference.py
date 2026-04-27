@@ -6,112 +6,110 @@ import pandas as pd
 import numpy as np
 
 # ==== CONFIG PATHS ====
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SAVE_DIR = os.path.join(BASE_DIR, "models_saved")
-MODEL_PATH = os.path.join(SAVE_DIR, "lstm_spike_predictor.pt")
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+SAVE_DIR    = os.path.join(BASE_DIR, "models_saved")
+MODEL_PATH  = os.path.join(SAVE_DIR, "lstm_spike_predictor.pt")
 SCALER_PATH = os.path.join(SAVE_DIR, "scaler.pkl")
 
-# On redéfinit la même architecture pour que PyTorch puisse charger les poids correctement
-class SpikePredictorLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size=64, num_layers=2):
-        super(SpikePredictorLSTM, self).__init__()
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(input_size * 50, hidden_size * 2) # 50 = WINDOW_SIZE
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.2)
-        self.fc2 = nn.Linear(hidden_size * 2, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 1)
-        
+WINDOW_SIZE = 50
+
+# FIX : le nom et l'architecture correspondent exactement à train.py (c'est un MLP, pas LSTM)
+class SpikePredictorMLP(nn.Module):
+    def __init__(self, input_size, hidden_size=64):
+        super(SpikePredictorMLP, self).__init__()
+        self.net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_size * WINDOW_SIZE, hidden_size * 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 1),
+        )
+
     def forward(self, x):
-        out = self.flatten(x)
-        out = self.fc1(out)
-        out = self.relu(out)
-        out = self.dropout(out)
-        out = self.fc2(out)
-        out = self.relu(out)
-        out = self.fc3(out)
-        return out
+        return self.net(x)
+
 
 class BoomPredictor:
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
-        # 1. Chargement du normalisateur (Vital pour la cohérence des Features)
+
+        # 1. Chargement du normalisateur
         try:
             self.scaler = joblib.load(SCALER_PATH)
             print("[INFO] Scaler chargé.")
         except Exception as e:
             print(f"[WARNING] Scaler non trouvé ({e}). L'inférence pourrait être faussée.")
             self.scaler = None
-            
-        # 2. Chargement du Cerveau PyTorch
-        # L'entrée est désormais de 6 colonnes (Prix, Delta, Velocité, RSI, EMA9, EMA21)
-        self.model = SpikePredictorLSTM(input_size=6).to(self.device)
+
+        # 2. Chargement du modèle PyTorch
+        self.model = SpikePredictorMLP(input_size=6).to(self.device)
         try:
-            # Map location permet de forcer en CPU si la personne qui run le bot n'a pas de GPU
-            self.model.load_state_dict(torch.load(MODEL_PATH, map_location=self.device, weights_only=True))
-            self.model.eval() # Mode Inférence : on fige les poids pour être ultra-rapide
+            self.model.load_state_dict(
+                torch.load(MODEL_PATH, map_location=self.device, weights_only=True)
+            )
+            self.model.eval()
             print("[INFO] [Cerveau IA] -> Connecté et prêt à prédire.")
         except Exception as e:
-            print(f"[WARNING] Modèle PT non trouvé ({e}). Assure-toi que train.py a généré le fichier.")
-            
+            print(f"[WARNING] Modèle PT non trouvé ({e}). Lance d'abord train.py.")
+
+    def _compute_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Feature engineering identique à train.py."""
+        df['price_change'] = df['price'].diff()
+        df['time_delta']   = df['timestamp'].diff()
+        df['velocity']     = df['price_change'] / df['time_delta'].replace(0, np.nan)
+
+        delta    = df['price'].diff()
+        up       = delta.clip(lower=0)
+        down     = -1 * delta.clip(upper=0)
+        ema_up   = up.ewm(com=13, adjust=False).mean()
+        ema_down = down.ewm(com=13, adjust=False).mean()
+        rs       = ema_up / ema_down.replace(0, np.nan)
+
+        df['rsi']    = 100 - (100 / (1 + rs))
+        df['ema_9']  = df['price'].ewm(span=9,  adjust=False).mean()
+        df['ema_21'] = df['price'].ewm(span=21, adjust=False).mean()
+
+        df.fillna(0, inplace=True)
+        return df
+
     def predict(self, recent_ticks: list) -> float:
         """
-        L'interface finale : reçoit une liste brute de ticks JSON et sort une probabilité.
+        Reçoit une liste de dicts [{price, timestamp}, ...] et retourne une probabilité [0, 1].
         """
         if len(recent_ticks) < 2:
-            return 0.0 # Impossible de calculer la vélocité sans 2 ticks
-            
+            return 0.0
+
         df = pd.DataFrame(recent_ticks)
-        
-        # Feature Engineering à la volée (le même que data_pipeline/train.py)
-        df['price_change'] = df['price'].diff()
-        df['time_delta'] = df['timestamp'].diff()
-        df['velocity'] = df['price_change'] / df['time_delta']
-        
-        # --- NOUVEAUX INDICATEURS (RSI, EMA) ---
-        delta = df['price'].diff()
-        up = delta.clip(lower=0)
-        down = -1 * delta.clip(upper=0)
-        # On utilise une approximation exponentielle pour s'aligner sur pyTorch
-        ema_up = up.ewm(com=13, adjust=False).mean()
-        ema_down = down.ewm(com=13, adjust=False).mean()
-        rs = ema_up / ema_down
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        df['ema_9'] = df['price'].ewm(span=9, adjust=False).mean()
-        df['ema_21'] = df['price'].ewm(span=21, adjust=False).mean()
-        
-        df.fillna(0, inplace=True)
-        
-        features_list = ['price_change', 'time_delta', 'velocity', 'rsi', 'ema_9', 'ema_21']
-        data_values = df[features_list].values
-        
-        # Le réseau s'attend IMPÉRATIVEMENT à une fenêtre de taille 50.
-        if len(data_values) > 50:
-            data_values = data_values[-50:] # Garde les 50 les plus frais
-        elif len(data_values) < 50:
-            # Padding de zéros pour compléter
-            pad_size = 50 - len(data_values)
-            padding = np.zeros((pad_size, 6))
+        df = self._compute_indicators(df)
+
+        features    = ['price_change', 'time_delta', 'velocity', 'rsi', 'ema_9', 'ema_21']
+        data_values = df[features].values.astype(np.float32)
+
+        # Fenêtre glissante de taille fixe 50
+        if len(data_values) > WINDOW_SIZE:
+            data_values = data_values[-WINDOW_SIZE:]
+        elif len(data_values) < WINDOW_SIZE:
+            pad_size    = WINDOW_SIZE - len(data_values)
+            padding     = np.zeros((pad_size, len(features)), dtype=np.float32)
             data_values = np.vstack((padding, data_values))
-            
-        # Standardisation avec les paramètres d'entrainement
+
+        # Standardisation avec les paramètres d'entraînement
         if self.scaler:
-            data_scaled = self.scaler.transform(data_values)
+            data_scaled = self.scaler.transform(data_values).astype(np.float32)
         else:
             data_scaled = data_values
-            
-        # Formattage Tenseur : (Batch=1, Séquence=50, Features=6)
-        x_tensor = torch.FloatTensor(data_scaled).unsqueeze(0).to(self.device)
-        
-        # Vitesse maximale (pas de calcul de backpropagation gradients)
+
+        # Tenseur : (Batch=1, Séquence=50, Features=6)
+        x_tensor = torch.FloatTensor(np.ascontiguousarray(data_scaled)).unsqueeze(0).to(self.device)
+
         with torch.no_grad():
-            logits = self.model(x_tensor)
-            # Conversion Logits -> Probabilité % par fonction Sigmoïde (S) native
+            logits      = self.model(x_tensor)
             probability = torch.sigmoid(logits).item()
-            
+
         return probability
 
-# L'instance singleton, le modèle ne sera chargé en RAM qu'une seule fois au lancement du backend
+
+# Singleton — le modèle n'est chargé en RAM qu'une seule fois au lancement du backend
 predictor_service = BoomPredictor()

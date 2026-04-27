@@ -32,8 +32,9 @@ SPIKE_THRESHOLD  = 1.0
 # ==== DATASET ====
 class BoomCrashDataset(Dataset):
     def __init__(self, data_scaled, targets, window_size):
-        self.data        = torch.FloatTensor(np.array(data_scaled, copy=True))
-        self.targets     = torch.FloatTensor(np.array(targets,     copy=True))
+        # ascontiguousarray garantit un bloc mémoire contigu AVANT la conversion Tensor
+        self.data        = torch.FloatTensor(np.ascontiguousarray(data_scaled))
+        self.targets     = torch.FloatTensor(np.ascontiguousarray(targets))
         self.window_size = window_size
 
     def __len__(self):
@@ -116,18 +117,19 @@ def prepare_data():
     scaler      = StandardScaler()
     data_scaled = scaler.fit_transform(data_values).astype(np.float32)
 
-    split_idx    = int(0.8 * len(data_scaled))
-    train_data   = data_scaled[:split_idx]
+    split_idx     = int(0.8 * len(data_scaled))
+    train_data    = data_scaled[:split_idx]
     train_targets = targets[:split_idx]
-    test_data    = data_scaled[split_idx:]
-    test_targets = targets[split_idx:]
+    test_data     = data_scaled[split_idx:]
+    test_targets  = targets[split_idx:]
 
     print(f"   --> Entraînement : {len(train_data)} lignes")
     print(f"   --> Test         : {len(test_data)} lignes")
 
     neg_count  = float((train_targets == 0).sum())
     pos_count  = float((train_targets == 1).sum())
-    pos_weight = neg_count / max(pos_count, 1.0)
+    # FIX : on plafonne à 100 pour éviter une explosion numérique du gradient
+    pos_weight = min(neg_count / max(pos_count, 1.0), 100.0)
     print(f"   --> Poids de compensation calculé : {pos_weight:.2f}")
 
     return train_data, train_targets, test_data, test_targets, scaler, pos_weight, len(features)
@@ -181,13 +183,14 @@ def train_model():
         pin_memory=False,
     )
 
-    model     = SpikePredictorMLP(input_size=num_features).to(device)
-    criterion = nn.BCEWithLogitsLoss(reduction='none')
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    model = SpikePredictorMLP(input_size=num_features).to(device)
 
-    # Tenseurs de pondération créés une seule fois (scalaires typed → pas de segfault backward)
-    w_pos = torch.tensor(pos_weight, dtype=torch.float32, device=device)
-    w_neg = torch.tensor(1.0,        dtype=torch.float32, device=device)
+    # FIX PRINCIPAL : pos_weight passé directement à BCEWithLogitsLoss
+    # Cela remplace le torch.where() manuel qui causait le segfault dans le backward C++
+    pos_weight_tensor = torch.tensor([pos_weight], dtype=torch.float32, device=device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
     print("\n==== DÉMARRAGE DE L'ENTRAÎNEMENT ====")
     for epoch in range(EPOCHS):
@@ -201,12 +204,9 @@ def train_model():
 
             optimizer.zero_grad()
 
-            outputs  = model(batch_x)
-            raw_loss = criterion(outputs, batch_y)
-
-            # torch.where avec des tenseurs typés — évite le segfault dans le backward C++
-            weights = torch.where(batch_y == 1.0, w_pos, w_neg)
-            loss    = (raw_loss * weights).mean()
+            outputs = model(batch_x)
+            # Calcul direct sans torch.where — stable sur tous les backends CPU/GPU
+            loss = criterion(outputs, batch_y)
 
             loss.backward()
             optimizer.step()
