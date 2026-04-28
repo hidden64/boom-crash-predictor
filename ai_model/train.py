@@ -1,13 +1,6 @@
-# ==== ANTI-SEGFAULT WINDOWS (ABSOLUMENT EN PREMIER, AVANT TOUT IMPORT) ====
 import os
-os.environ['OMP_NUM_THREADS']      = '1'
-os.environ['MKL_NUM_THREADS']      = '1'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
-
 import glob
 import torch
-torch.set_num_threads(1)
 
 import torch.nn as nn
 import pandas as pd
@@ -90,7 +83,33 @@ def prepare_data():
 
     file_path = max(files, key=os.path.getctime)
     print(f"   --> Chargement de {file_path}")
-    df = pd.read_csv(file_path)
+
+    # Détection automatique du séparateur (MT5 = tab, Deriv = virgule)
+    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        first_line = f.readline()
+    separator = '\t' if '\t' in first_line else ','
+
+    df = pd.read_csv(file_path, sep=separator, engine='c')
+
+    # Adaptation au format MetaTrader 5 s'il est détecté
+    if '<DATE>' in df.columns:
+        print("   --> Format MetaTrader détecté. Conversion des données...")
+        df.columns = [c.replace('<', '').replace('>', '') for c in df.columns]
+
+        # Sécurité RAM : Limite pour éviter un dépassement (OOM) sur les PC avec moins de 32GB
+        if len(df) > 2000000:
+            print(f"   --> [Alerte RAM] Dataset volumineux ({len(df)} ticks). Restriction aux 2 derniers millions.")
+            df = df.tail(2000000).copy()
+
+        # Reconstitution des colonnes nécessaires
+        df['price'] = df['BID']
+        df['timestamp'] = pd.to_datetime(df['DATE'] + ' ' + df['TIME'], format='%Y.%m.%d %H:%M:%S.%f')
+        df['price_change'] = df['price'].diff()
+        df['time_delta'] = df['timestamp'].diff().dt.total_seconds()
+        df['velocity'] = df['price_change'] / df['time_delta'].replace(0, 0.001)
+        df.dropna(subset=['price_change', 'time_delta'], inplace=True)
+    else:
+        print("   --> Format Deriv standard détecté.")
 
     print("2. Calcul des étiquettes (spikes)...")
     df['is_spike'] = (df['price_change'] >= SPIKE_THRESHOLD).astype(int)
