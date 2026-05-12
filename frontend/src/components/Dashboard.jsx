@@ -92,9 +92,15 @@ export default function Dashboard() {
           setProbability(data.spike_probability);
           setBackendConnected(true);
           
-          // Audio Alert System for 80%
+          const latestPrice = ticks[ticks.length - 1].price;
+
+          // Prémice : zone 60-79% (avertissement précoce)
+          if (data.spike_probability >= 60 && data.spike_probability < 80) {
+            triggerAlert60(data.spike_probability, latestPrice);
+          }
+
+          // Alerte forte : >= 80% — son + historique haut risque
           if (data.spike_probability >= 80) {
-            triggerAlert60(data.spike_probability, ticks[ticks.length - 1].price);
             if (!playedSoundRef.current) {
               playedSoundRef.current = true;
               const audio = new Audio('/son.wav');
@@ -104,12 +110,12 @@ export default function Dashboard() {
               });
             }
           } else {
-            // Reset the lock when probability drops below 60%
+            // Reset le verrou audio quand on repasse sous le seuil 80%
             playedSoundRef.current = false;
           }
-          
+
           if (data.alert) {
-            triggerAlert(data.spike_probability, ticks[ticks.length - 1].price);
+            triggerAlert(data.spike_probability, latestPrice);
           }
 
         } catch (err) {

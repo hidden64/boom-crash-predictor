@@ -4,4 +4,7 @@ __pycache__/
 ai_model/dataset/
 ai_model/models_saved/
 .venv/
+.pytest_cache/
+backend/alerts.db
+.claude/
 
