@@ -12,8 +12,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "Tour de Contrôle — Boom/Crash IA",
-  description: "Prédicteur de Spikes Boom/Crash en temps réel (Deriv + PyTorch).",
+  title: "Tour de Contrôle — CRASH 500 IA",
+  description: "Prédicteur de Crashs CRASH 500 en temps réel (Deriv + PyTorch).",
 };
 
 export default function RootLayout({ children }) {

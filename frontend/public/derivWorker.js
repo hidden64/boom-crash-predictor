@@ -1,7 +1,8 @@
 // Web Worker pour traiter le WebSocket en arrière-plan
 // Les navigateurs ne brident PAS les Web Workers quand l'onglet devient inactif.
 
-const APP_ID = 1089; 
+const APP_ID = 1089;
+const SYMBOL = "CRASH500";
 const wsUrl = `wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`;
 let ws = null;
 let pingInterval = null;
@@ -11,16 +12,16 @@ function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
-  
+
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
     // Demande du stream
     ws.send(JSON.stringify({
-      ticks: "BOOM1000",
+      ticks: SYMBOL,
       subscribe: 1
     }));
-    
+
     // Ping anti-timeout Deriv (toutes les 25s)
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
@@ -49,12 +50,12 @@ function connect() {
     setTimeout(connect, 3000);
   };
 
-  ws.onerror = (err) => {
+  ws.onerror = () => {
     ws.close();
   };
 }
 
-// Ecoute les ordres du thread principal (Dashboard)
+// Écoute les ordres du thread principal (Dashboard)
 self.onmessage = (e) => {
   if (e.data.type === 'START') {
     connect();

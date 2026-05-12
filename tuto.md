@@ -1,93 +1,100 @@
-# Guide du Trader Algorithmique - Boom-Crash Predictor 🧠📊
+# Guide du Trader Algorithmique — CRASH 500 Predictor 🧠📉
 
-Ce document est votre bible pour maîtriser la machine que nous avons construite de bout en bout. Votre objectif initial était de créer un **système de trading automatisé piloté par l'IA** capable de prédire les célèbres explosions (Spikes) des indices Boom/Crash de Deriv. 
-
-Voici exactement comment utiliser chaque brique de ce projet, de la récolte des données brutes jusqu'au clic sur le bouton "Acheter".
+Ce document est votre bible pour maîtriser la machine construite de bout en bout. Objectif : un **système de trading manuel assisté par IA** capable de prédire les célèbres **crashs** (chutes brutales) de l'indice synthétique **CRASH 500** de Deriv.
 
 ---
 
-## 🏗️ Rappel du Concept (Le Plan d'Action)
+## 🏗️ Rappel du Concept
 
-Pour qu'une IA devine le futur, elle doit d'abord apprendre le passé. L'application est donc divisée en 3 grandes phases, que vous devez suivre dans cet ordre si vous partez de zéro :
+Pour qu'une IA devine le futur, elle doit d'abord apprendre le passé. L'application est divisée en 3 grandes phases, à suivre dans l'ordre si vous partez de zéro :
 
-1. **La Collecte (Data Pipeline) :** On aspire des dizaines de milliers de ticks du marché pour constituer une base d'entraînement.
-2. **L'Entraînement (AI Model) :** On enferme l'IA dans une salle pour qu'elle étudie la "vélocité" avant un Spike, grâce à un réseau de neurones (LSTM).
-3. **Le Direct (Backend & Tour de Contrôle) :** On branche l'IA entraînée sur le flux en temps réel et on observe via une interface premium Next.js.
+1. **La Collecte (Data Pipeline)** : on aspire des dizaines de milliers de ticks CRASH 500 pour constituer une base d'entraînement.
+2. **L'Entraînement (AI Model)** : on enferme l'IA dans une salle pour qu'elle apprenne à reconnaître l'empreinte précédant une chute.
+3. **Le Direct (Backend & Tour de Contrôle)** : on branche l'IA entraînée sur le flux temps réel et on observe via une interface premium Next.js.
 
 ---
 
 ## ⚙️ Phase 1 : Collecter des données historiques
 
-Avant d'avoir une IA intelligente, c'est une coquille vide. Il lui faut la "Data".
+```bash
+python data_pipeline/deriv_client.py
+```
 
-1. **Ouvrez un terminal** à la racine de votre dossier `boom-crash-predictor`.
-2. Lancez le script de collecte :
-   ```bash
-   python data_pipeline/deriv_client.py
-   ```
-3. **Que se passe-t-il ?** Ce script ouvre une connexion WebSocket avec les serveurs de Deriv. Il va aspirer en rafale 100 000 ticks de l'indice `BOOM1000EZ` en reculant dans le temps. Il va calculer lui-même la vélocité et enregistrer tout cela dans un gros fichier `.csv` situé dans le dossier `ai_model/dataset/`.
-4. *Astuce : Si le marché a un comportement très différent le mois suivant, relancez ce script pour capter les nouvelles tendances de Deriv, afin de ré-entraîner votre modèle.*
+Ce script ouvre une connexion WebSocket avec Deriv et aspire en rafale jusqu'à **1 000 000 ticks** de `CRASH500` en reculant dans le temps. Il calcule la vélocité (négative durant les crashs) et enregistre le tout en CSV dans `ai_model/dataset/`.
+
+> Astuce : si le marché change de comportement, relancez la collecte pour réentraîner sur du frais.
 
 ---
 
-## 🧠 Phase 2 : Forger et Entraîner le Cerveau (Deep Learning)
+## 🧠 Phase 2 : Forger et entraîner le cerveau
 
-Une fois le fichier `.csv` créé rempli de milliers de lignes de prix, on passe à PyTorch.
+```bash
+python ai_model/train.py
+```
 
-1. Laissez le terminal ouvert ou ouvrez-en un nouveau, puis tapez :
-   ```bash
-   python ai_model/train.py
-   ```
-2. **Que se passe-t-il ?** Ce script (le scientifique de données) va :
-   - Lire le `.csv` généré à l'Étape 1.
-   - Normaliser les données (les mettre à la même échelle).
-   - "Entraîner" le modèle LSTM. L'écran va afficher des "Epochs" (cycles d'apprentissage). L'erreur (Loss) diminuera progressivement.
-   - Sauvegarder le cerveau final sous forme d'un objet PyTorch : `lstm_spike_predictor.pt` (ainsi que la configuration `scaler.pkl`) dans le dossier `models_saved`.
-3. **C'est fini !** Votre IA a maintenant son diplôme de marché. La phase d'entraînement n'est à refaire que si le marché change énormément sur le long terme.
-
----
-
-## 🚀 Phase 3 : Mode Live et "Tour de Contrôle"
-
-C'est ici que la magie opère et que l'interface graphique intervient. 
-Votre modèle est entraîné, on veut maintenant lui donner le pouls du marché à la seconde près.
-
-1. **Le Lancement Ultime :**
-   Double-cliquez simplement sur le fichier **`start.bat`** (ou tapez `.\start.bat` dans un terminal standard).
-2. **Que se passe-t-il ?** Deux fenêtres noires vont s'ouvrir.
-   - **La 1ère :** Allume le "Backend FastAPI". Elle charge instantanément en mémoire votre modèle IA (le `.pt`) et écoute sur un port réseau sans broncher.
-   - **La 2nde :** Allume la Tour de Contrôle "Next.js" (le site web).
-3. Ouvrez votre navigateur sur **`http://localhost:3000`**. L'interface sombre apparaît.
-4. Immédiatement, le graphique s'anime. L'interface vient de se brancher "en direct" chez Deriv. À chaque fois que la courbe bouge, elle envoie sournoisement les 50 derniers points au Backend, qui renvoie la probabilité calculée.
+Ce que fait ce script :
+- Lit le CSV le plus récent.
+- Détecte automatiquement le format (Deriv vs MT5).
+- Labellise les **crashs** : `is_crash = (price_change <= -CRASH_THRESHOLD)` (seuil = 1.0 par défaut).
+- Calcule indicateurs : RSI, EMA9, EMA21, vélocité, deltas.
+- Normalise (StandardScaler).
+- Entraîne un MLP profond pour 10 epochs avec `BCEWithLogitsLoss` + `pos_weight` (équilibrage classes).
+- Évalue : Accuracy, Precision, Recall, F1.
+- Exporte `ai_model/models_saved/crash_predictor.pt` et `scaler.pkl`.
 
 ---
 
-## 💰 Phase 4 : Comment "Trader" avec l'Alerte
+## 🚀 Phase 3 : Mode Live et Tour de Contrôle
 
-Maintenant que vous avez les yeux rivés sur le moniteur, voici comment le projet a été pensé pour vous aider en trading manuel assisté :
+```bash
+start.bat
+```
 
-1. Ouvrez votre **Plateforme de Trading Deriv** sur votre PC ou téléphone (en mode Démo, toujours, dans un premier temps !), sur le marché `Boom 1000`.
-2. Regardez la **Tour de Contrôle**.
-   - Le score est à **35%**, vert. C'est le plat pays, la courbe s'effrite lentement. Ne touchez à rien.
-   - Le score monte lentement... **60%**, jaune. Le marché "ralentit" étonnamment, la vélocité change. L'IA le voit. Mettez le doigt sur le bouton "BUY / ACHETER" de Deriv.
-   - D'un coup, le pourcentage clignote rouge : **87% !** ALERTE MAXIMALE.
-3. Cliquez sur **BUY (Acheter)** sur Deriv instantanément.
-4. L'explosion haussière (Spike) attendue va souvent se déclencher dans les 2 à 5 "Ticks" qui suivent. Une fois l'énorme bougie verte apparue sur votre graphique Deriv, cliquez immédiatement sur **Fermer la sélection (Take Profit)** pour encaisser.
-5. Sur la Tour de Contrôle, l'effet de pression est libéré : la probabilité retombe à 15% instantanément. L'alerte >80% est stockée dans la liste Historique en bas à droite pour vos archives.
+Deux fenêtres s'ouvrent :
+- **Backend FastAPI** (port 8000) : charge le modèle, écoute `/predict`.
+- **Frontend Next.js** (port 3000) : flux Deriv temps réel + jauge IA.
+
+→ ouvrir **http://localhost:3000**.
+
+Le graphique s'anime, et toutes les ~1 s la fenêtre des 50 derniers ticks est envoyée au backend, qui renvoie la probabilité de crash.
 
 ---
 
-## 🛠️ Aller Plus Loin (Bricolages Avancés)
+## 💰 Phase 4 : Comment "trader" avec l'alerte
 
-Puisque ce système est le vôtre, vous pouvez tout dompter :
-* **Déclenchement trop strict/trop laxiste ?**
-Si vous trouvez que l'IA sonne l'alerte à tort (Faux Positif) trop souvent, ouvrez `frontend/src/components/Dashboard.jsx` vers la ligne 126, et montez l'exigence : 
-   `const isHighRisk = probability >= 85;` (au lieu de 80).
-* **Vous voulez trader le CRASH au lieu du BOOM ?**
-C'est le processus inverse :
-  1. Modifiez `deriv_client.py` ligne 139 avec `symbol="CRASH1000"`. Récupérez les données (Phase 1).
-  2. Réentraînez le modèle (Phase 2).
-  3. Modifiez `Dashboard.jsx` (Front-end) dans la fonction `useEffect` du WebSocket pour s'abonner à `"ticks": "CRASH1000"`.
-  4. L'indicateur d'Alerte de la Tour de Contrôle (80%) signalera alors qu'il faut cliquer sur **SELL (Vendre)** et non plus Buy sur Deriv !
+1. Ouvrez votre **plateforme Deriv** (toujours en compte démo dans un premier temps !) sur le marché `Crash 500`.
+2. Surveillez la **Tour de Contrôle** :
+   - **35 % vert** : marché serein, courbe qui grimpote lentement → ne touchez à rien.
+   - **60 %+ jaune** : la vélocité haussière s'épuise, l'IA flaire l'épuisement → doigt sur le bouton **SELL**.
+   - **87 % rouge clignotant** : ALERTE MAXIMALE.
+3. Cliquez **SELL** sur Deriv instantanément.
+4. La chute attendue (gros tick rouge / spike baissier) tombe en général dans les **2 à 5 ticks** suivants.
+5. Une fois la grosse bougie rouge passée, fermez la position (Take Profit).
+6. Sur la Tour de Contrôle la probabilité retombe à ~15 %, l'alerte est archivée en bas à droite.
 
-**Disclaimer :** Ce logiciel (votre création) est un outil d'aide à la décision par Machine Learning, et non la garantie d'une richesse absolue. Comprendre le marché Deriv reste indispensable !
+---
+
+## 🛠️ Aller plus loin
+
+- **Changer le seuil de crash** : `CRASH_THRESHOLD` dans `ai_model/train.py`.
+- **Changer la fenêtre temporelle** : `WINDOW_SIZE` dans `train.py` ET `ai_model/inference.py` (doivent rester identiques).
+- **Changer l'horizon de prédiction** : `PREDICT_AHEAD` (5 ticks par défaut).
+- **Trader sur un autre symbole Deriv** : adaptez `symbol=` dans `data_pipeline/deriv_client.py`, la constante `SYMBOL` dans `frontend/public/derivWorker.js` et `frontend/src/components/Dashboard.jsx`.
+- **Ajuster la sensibilité de l'alerte** : `Dashboard.jsx` → `isHighRisk = probability >= 80` (passez à 85 si trop de faux positifs).
+
+---
+
+## 🔍 Debug rapide
+
+| Symptôme | Cause probable | Solution |
+|---|---|---|
+| `ia_brain: fallback_random` | Modèle PT introuvable | Lancer `python ai_model/train.py` |
+| `Deriv API : déconnecté` | App ID Deriv invalide / réseau coupé | Vérifier `.env` (`DERIV_APP_ID`) |
+| Probabilité bloquée à 0 % | Moins de 2 ticks reçus | Attendre quelques secondes |
+| Aucune alerte > 80 % | Modèle pas assez entraîné / seuil trop strict | Plus d'epochs / augmenter le dataset |
+
+---
+
+## 🚨 Rappel légal
+
+L'utilisation de cette architecture pour trader avec des fonds réels reste à vos risques. **Compte démo obligatoire** avant tout test live.

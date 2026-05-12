@@ -26,7 +26,7 @@ logger = logging.getLogger("DerivDataPipeline")
 load_dotenv(Path(__file__).parent.parent / ".env")
 APP_ID = os.getenv("DERIV_APP_ID", "1089") # 1089 est l'ID public par défaut
 
-async def fetch_historical_ticks(symbol: str = "BOOM1000EZ", total_ticks: int = 100000):
+async def fetch_historical_ticks(symbol: str = "CRASH500", total_ticks: int = 100000):
     """
     Se connecte à l'API WebSocket de Deriv pour récupérer massivement des ticks historiques.
     """
@@ -102,10 +102,11 @@ async def fetch_historical_ticks(symbol: str = "BOOM1000EZ", total_ticks: int = 
             df['datetime'] = pd.to_datetime(df['timestamp'], unit='s')
             
             # --- FEATURE ENGINEERING RAPIDE (Vélocité) ---
+            # NB : sur CRASH 500, price_change est négatif lors d'un crash (chute brutale).
             logger.info("Calcul préliminaire de la vélocité et du delta prix...")
             df['price_change'] = df['price'].diff()
             df['time_delta'] = df['timestamp'].diff()
-            df['velocity'] = df['price_change'] / df['time_delta']
+            df['velocity'] = df['price_change'] / df['time_delta'].replace(0, 0.001)
             
             # Remplacement des NaN sur la première ligne par 0
             df.fillna(0, inplace=True)
@@ -130,12 +131,12 @@ async def fetch_historical_ticks(symbol: str = "BOOM1000EZ", total_ticks: int = 
         logger.error(f"Erreur inattendue: {str(e)}")
 
 if __name__ == "__main__":
-    logger.info("Démarrage du Data Pipeline asynchrone pour l'historique...")
-    # NOTE: Sur Deriv, le symbole officiel pour Boom 1000 est très souvent "BOOM1000EZ".
-    # Si cela échoue, tu pourras tester avec "BOOM1000" ou chercher le bon code dans l'API.
-    
+    logger.info("Démarrage du Data Pipeline asynchrone pour l'historique CRASH 500...")
+    # NOTE : sur Deriv, le symbole officiel est `CRASH500`.
+    # En cas d'échec, vérifier les codes via l'API `active_symbols`.
+
     try:
-        # Exécute la boucle asynchrone principal (Passage à 1 000 000 Ticks)
-        asyncio.run(fetch_historical_ticks(symbol="BOOM1000", total_ticks=1000000))
+        # Exécute la boucle asynchrone principale (1 000 000 Ticks)
+        asyncio.run(fetch_historical_ticks(symbol="CRASH500", total_ticks=1000000))
     except KeyboardInterrupt:
         logger.warning("Interrompu par l'utilisateur.")
