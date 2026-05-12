@@ -7,15 +7,19 @@ from pydantic import BaseModel
 from typing import List
 import uvicorn
 
-# Inclusion manuelle du module parent pour pouvoir appeler `ai_model` depuis `backend`
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Backend dir + project root sur le sys.path : permet l'import depuis tests, racine ou backend/
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_BACKEND_DIR)
+for _path in (_BACKEND_DIR, _PROJECT_ROOT):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
 try:
     from ai_model.inference import predictor_service
 except Exception as e:
     print(f"Erreur d'import critique du modèle : {e}")
     predictor_service = None
 
-# Import du module de base de données
 from database import init_db, save_prediction
 
 # Création du chef d'orchestre via FastAPI
