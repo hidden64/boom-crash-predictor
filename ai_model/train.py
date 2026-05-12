@@ -19,11 +19,13 @@ PREDICT_AHEAD    = 5
 BATCH_SIZE       = 256
 EPOCHS           = 10
 LEARNING_RATE    = 0.001
-SPIKE_THRESHOLD  = 1.0
+
+# Sur CRASH 500, un "crash" est un tick descendant brutal : price_change <= -CRASH_THRESHOLD
+CRASH_THRESHOLD  = 1.0
 
 
 # ==== DATASET ====
-class BoomCrashDataset(Dataset):
+class CrashDataset(Dataset):
     def __init__(self, data_scaled, targets, window_size):
         # ascontiguousarray garantit un bloc mémoire contigu AVANT la conversion Tensor
         self.data        = torch.FloatTensor(np.ascontiguousarray(data_scaled))
@@ -41,9 +43,9 @@ class BoomCrashDataset(Dataset):
 
 
 # ==== ARCHITECTURE MLP ====
-class SpikePredictorMLP(nn.Module):
+class CrashPredictorMLP(nn.Module):
     def __init__(self, input_size, hidden_size=64):
-        super(SpikePredictorMLP, self).__init__()
+        super(CrashPredictorMLP, self).__init__()
         self.net = nn.Sequential(
             nn.Flatten(),
             nn.Linear(input_size * WINDOW_SIZE, hidden_size * 2),
@@ -67,7 +69,7 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     ema_down = down.ewm(com=13, adjust=False).mean()
     rs       = ema_up / ema_down.replace(0, np.nan)
 
-    df['rsi']   = 100 - (100 / (1 + rs))
+    df['rsi']    = 100 - (100 / (1 + rs))
     df['ema_9']  = df['price'].ewm(span=9,  adjust=False).mean()
     df['ema_21'] = df['price'].ewm(span=21, adjust=False).mean()
 
@@ -111,14 +113,15 @@ def prepare_data():
     else:
         print("   --> Format Deriv standard détecté.")
 
-    print("2. Calcul des étiquettes (spikes)...")
-    df['is_spike'] = (df['price_change'] >= SPIKE_THRESHOLD).astype(int)
-    num_spikes     = df['is_spike'].sum()
+    print("2. Calcul des étiquettes (crashs)...")
+    # CRASH 500 : un crash = chute brutale → price_change négatif et |price_change| >= seuil.
+    df['is_crash'] = (df['price_change'] <= -CRASH_THRESHOLD).astype(int)
+    num_crashes    = df['is_crash'].sum()
     print(f"   --> Ticks totaux  : {len(df)}")
-    print(f"   --> Spikes détectés : {num_spikes} ({(num_spikes / len(df)) * 100:.2f}%)")
+    print(f"   --> Crashs détectés : {num_crashes} ({(num_crashes / len(df)) * 100:.2f}%)")
 
     df['target'] = (
-        df['is_spike']
+        df['is_crash']
         .rolling(window=PREDICT_AHEAD)
         .max()
         .shift(-PREDICT_AHEAD)
@@ -156,7 +159,7 @@ def prepare_data():
 
 # ==== ÉVALUATION ====
 def evaluate(model, data_scaled, targets, device):
-    dataset = BoomCrashDataset(data_scaled, targets, window_size=WINDOW_SIZE)
+    dataset = CrashDataset(data_scaled, targets, window_size=WINDOW_SIZE)
     loader  = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False,
                          num_workers=0, pin_memory=False)
 
@@ -191,7 +194,7 @@ def train_model():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n[!] Puce utilisée : {device}")
 
-    train_dataset = BoomCrashDataset(train_data, train_targets, window_size=WINDOW_SIZE)
+    train_dataset = CrashDataset(train_data, train_targets, window_size=WINDOW_SIZE)
 
     # num_workers=0 est OBLIGATOIRE sur Windows pour éviter le segfault multiprocessing
     train_loader = DataLoader(
@@ -202,7 +205,7 @@ def train_model():
         pin_memory=False,
     )
 
-    model = SpikePredictorMLP(input_size=num_features).to(device)
+    model = CrashPredictorMLP(input_size=num_features).to(device)
 
     # FIX PRINCIPAL : pos_weight passé directement à BCEWithLogitsLoss
     # Cela remplace le torch.where() manuel qui causait le segfault dans le backward C++
@@ -248,7 +251,7 @@ def train_model():
 
     # Sauvegarde
     os.makedirs(SAVE_DIR, exist_ok=True)
-    model_path  = os.path.join(SAVE_DIR, "lstm_spike_predictor.pt")
+    model_path  = os.path.join(SAVE_DIR, "crash_predictor.pt")
     scaler_path = os.path.join(SAVE_DIR, "scaler.pkl")
 
     torch.save(model.state_dict(), model_path)

@@ -1,6 +1,6 @@
 @echo off
 echo ====================================================
-echo   Lancement de la Tour de Controle Boom-Crash IA
+echo   Lancement de la Tour de Controle CRASH 500 IA
 echo ====================================================
 
 echo [1/2] Demarrage du Backend (FastAPI)...

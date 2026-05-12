@@ -10,21 +10,21 @@ import numpy as np
 # ==== CONFIG PATHS ====
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR    = os.path.join(BASE_DIR, "models_saved")
-MODEL_PATH  = os.path.join(SAVE_DIR, "lstm_spike_predictor.pt")
+MODEL_PATH  = os.path.join(SAVE_DIR, "crash_predictor.pt")
 SCALER_PATH = os.path.join(SAVE_DIR, "scaler.pkl")
 
 WINDOW_SIZE = 50
 NUM_FEATURES = 6
 
-logger = logging.getLogger("BoomPredictor")
+logger = logging.getLogger("CrashPredictor")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# Architecture strictement identique à train.py (MLP, malgré le nom historique LSTM)
-class SpikePredictorMLP(nn.Module):
+# Architecture strictement identique à train.py
+class CrashPredictorMLP(nn.Module):
     def __init__(self, input_size, hidden_size=64):
-        super(SpikePredictorMLP, self).__init__()
+        super(CrashPredictorMLP, self).__init__()
         self.net = nn.Sequential(
             nn.Flatten(),
             nn.Linear(input_size * WINDOW_SIZE, hidden_size * 2),
@@ -39,12 +39,14 @@ class SpikePredictorMLP(nn.Module):
         return self.net(x)
 
 
-class BoomPredictor:
+class CrashPredictor:
+    """Service singleton — prédit la probabilité d'un crash imminent sur CRASH 500."""
+
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_loaded = False
         self.scaler = None
-        self.model = SpikePredictorMLP(input_size=NUM_FEATURES).to(self.device)
+        self.model = CrashPredictorMLP(input_size=NUM_FEATURES).to(self.device)
         self.model.eval()
 
         # 1. Chargement du normalisateur
@@ -64,7 +66,7 @@ class BoomPredictor:
                 self.model.load_state_dict(state)
                 self.model.eval()
                 self.model_loaded = True
-                logger.info("[Cerveau IA] -> Connecté et prêt à prédire (device=%s).", self.device)
+                logger.info("[Cerveau IA] -> Connecté et prêt à prédire les crashs (device=%s).", self.device)
             except Exception as e:
                 logger.warning("Échec du chargement du modèle (%s). Inférence avec poids aléatoires.", e)
         else:
@@ -74,7 +76,6 @@ class BoomPredictor:
         """Feature engineering identique à train.py (format Deriv)."""
         df['price_change'] = df['price'].diff()
         df['time_delta']   = df['timestamp'].diff()
-        # On évite la division par 0 (ticks au même timestamp) comme dans train.py
         safe_delta         = df['time_delta'].replace(0, 0.001)
         df['velocity']     = df['price_change'] / safe_delta
 
@@ -95,7 +96,8 @@ class BoomPredictor:
 
     def predict(self, recent_ticks: list) -> float:
         """
-        Reçoit une liste de dicts [{price, timestamp}, ...] et retourne une probabilité [0, 1].
+        Reçoit une liste de dicts [{price, timestamp}, ...] et retourne la
+        probabilité de crash imminent dans [0, 1].
         """
         if not recent_ticks or len(recent_ticks) < 2:
             return 0.0
@@ -134,4 +136,4 @@ class BoomPredictor:
 
 
 # Singleton — le modèle n'est chargé en RAM qu'une seule fois au lancement du backend
-predictor_service = BoomPredictor()
+predictor_service = CrashPredictor()
